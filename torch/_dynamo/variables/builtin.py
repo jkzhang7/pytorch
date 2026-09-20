@@ -1260,13 +1260,12 @@ class BuiltinVariable(BaseBuiltinVariable):
                 kwargs: dict[str, VariableTracker],
             ) -> VariableTracker:
                 if fn is AssertionError and not all(
-                    x.is_python_constant() and isinstance(x.as_python_constant(), str)
-                    for x in args
+                    x.is_python_constant() for x in args
                 ):
                     unimplemented(
                         gb_type="assert with non-string message",
                         context=str(args),
-                        explanation="Dynamo only supports asserts with string messages",
+                        explanation="Dynamo only supports asserts with constant messages",
                         hints=[*graph_break_hints.SUPPORTABLE],
                     )
 

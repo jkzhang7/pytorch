@@ -2830,6 +2830,14 @@
     {
       "Gb_type": "assert with non-string message",
       "Context": "str(args)",
+      "Explanation": "Dynamo only supports asserts with constant messages",
+      "Hints": [
+        "It may be possible to write Dynamo tracing rules for this code. Please report an issue to PyTorch if you encounter this graph break often and it is causing performance issues."
+      ]
+    },
+    {
+      "Gb_type": "assert with non-string message",
+      "Context": "str(args)",
       "Explanation": "Dynamo only supports asserts with string messages",
       "Hints": [
         "It may be possible to write Dynamo tracing rules for this code. Please report an issue to PyTorch if you encounter this graph break often and it is causing performance issues."
