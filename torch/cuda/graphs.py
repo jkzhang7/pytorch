@@ -1176,6 +1176,7 @@ def export_graph_data(path: str) -> Callable[[CUDAGraph], None]:
 _ANNOTATION_CONFIG_KEYS: dict[str, tuple[typing.Any, tuple[typing.Any, ...]]] = {
     "backend": ("auto", ("auto", "cupti", "edge_walk")),
     "key_by": ("exec", ("exec", "source")),
+    "record_py_stacks": (False, (False, True)),
 }
 
 
@@ -1200,6 +1201,8 @@ def _parse_annotation_config(
                 f"annotation_config[{key!r}] must be one of {list(allowed)}, got {value!r}"
             )
         resolved[key] = value
+    if resolved["record_py_stacks"] and resolved["backend"] == "edge_walk":
+        raise ValueError("record_py_stacks=True requires the CUPTI annotation backend")
     return resolved
 
 
@@ -1246,6 +1249,13 @@ class graph:
             ``"source"`` leaves them on the capture graph, for a consumer that reads CUPTI's
             ``sourceGraphNodeId`` instead (needs CUPTI >= 13.4 and a CUDA driver >= 13.4,
             else the capture raises).
+            ``"record_py_stacks"`` (bool, default ``False``) captures live Python launch
+            stacks for all annotatable nodes, including those outside ``mark_kernels``
+            scopes. It requires CUPTI and single-threaded autograd: ``"auto"`` brings
+            Cuspy up as with ``"cupti"``, and ``"edge_walk"`` is rejected. Stacks follow
+            ``"key_by"`` and stay separate from profiler annotations; read or save them
+            with :func:`~torch.cuda.graph_annotations.get_kernel_py_stacks` or
+            :func:`~torch.cuda.graph_annotations.dump_kernel_py_stacks`.
         check_input_liveness (bool, optional): If ``True``, tracks external tensor inputs during graph capture and
             raises an error if any are deallocated before replay. This helps debug "use after free" errors
             where input tensors are garbage collected between capture and replay. Default: ``False``.
@@ -1346,8 +1356,11 @@ class graph:
 
         backend = "edge_walk"
         requested = self._annotation_config["backend"]
+        record_py_stacks = (
+            self._enable_annotations and self._annotation_config["record_py_stacks"]
+        )
         if self._enable_annotations and requested != "edge_walk":
-            force = requested == "cupti"
+            force = requested == "cupti" or record_py_stacks
             # The CUPTI backend attributes each node to the mark_kernels scope open on the
             # thread that created it, so multithreaded autograd would mis-attribute the nodes
             # its engine worker threads create -- their scope state is not the capturing
@@ -1357,19 +1370,21 @@ class graph:
             if torch._C._is_multithreading_enabled():
                 if force:
                     raise RuntimeError(
-                        "annotation_config={'backend': 'cupti'} requires single-threaded "
+                        "The CUPTI annotation backend requires single-threaded "
                         "autograd, so that graph nodes are created on the capturing thread and "
                         "attributed to the right mark_kernels scope. Wrap the capture in "
                         "torch.autograd.grad_mode.set_multithreading_enabled(False)."
                     )
-            elif _graph_node_callbacks.register(force=force):
+            elif _graph_node_callbacks.register(
+                force=force, record_py_stacks=record_py_stacks
+            ):
                 backend = "cupti"
             elif force:
                 raise RuntimeError(
-                    "annotation_config={'backend': 'cupti'} could not register CUPTI "
+                    "The CUPTI annotation backend could not register CUPTI "
                     "node-creation callbacks. This needs the cupti-python package and "
-                    "Cuspy able to subscribe; use 'auto' to fall back to the "
-                    "dependent-edge walk instead."
+                    "Cuspy able to subscribe; use 'auto' with record_py_stacks=False "
+                    "to fall back to the dependent-edge walk instead."
                 )
 
         # Scope annotation recording to this capture: the capture-root stamp and
@@ -1406,8 +1421,24 @@ class graph:
             # would match nothing -- which is why the backend is published only now.
             if backend == "cupti" and not _graph_node_callbacks.arm():
                 _graph_node_callbacks.disarm()
+                if record_py_stacks:
+                    raise RuntimeError(
+                        "record_py_stacks=True requires cudaGraphNodeGetToolsId "
+                        "(cuda-bindings and CUDA driver >= 13.1 or equivalent cuda-compat)"
+                    )
                 backend = "edge_walk"
             _set_annotation_backend(backend)
+            if record_py_stacks:
+                from torch.cuda._graph_annotations import remove_kernel_annotations
+
+                # Stacks also need cleanup without a profiler owning a destroy hook,
+                # including a keep_graph=True capture that is never instantiated.
+                ids = self.cuda_graph._recorded_exec_ids
+                if self.cuda_graph._capture_graph_id is not None:
+                    ids.add(self.cuda_graph._capture_graph_id)
+                self.cuda_graph.register_destroy_callback(
+                    lambda: remove_kernel_annotations(ids)
+                )
         except BaseException:
             _graph_node_callbacks.disarm()
             _set_annotations_enabled(False)
@@ -1436,6 +1467,9 @@ class graph:
             if self._enable_annotations:
                 resolve_pending_annotations()
                 self.cuda_graph._annotated_body_graph_ids = take_body_graph_ids()
+                self.cuda_graph._recorded_exec_ids |= (
+                    self.cuda_graph._annotated_body_graph_ids
+                )
 
             # For keep_graph=False capture_end instantiates, which remaps annotations
             # from the capture id (stamped back at capture_begin) to the exec id. For
