@@ -30,7 +30,11 @@ from torch._inductor.codegen.triton import (
     TritonKernelOverrides,
     TritonSymbols,
 )
-from torch._inductor.codegen.wrapper import _escape_triton_kernel_source_for_wrapper
+from torch._inductor.codegen.wrapper import (
+    _escape_triton_kernel_source_for_wrapper,
+    user_defined_triton_kernel_transitive_closure,
+    user_defined_triton_kernel_transitive_closure_source_code,
+)
 from torch._inductor.dtype_propagation import DtypePropagationOpsHandler, promote_types
 from torch._inductor.graph import GraphLowering
 from torch._inductor.runtime.hints import AutotuneHint, DeviceProperties
@@ -79,6 +83,18 @@ except ImportError:
         UserDefinedTritonKernelNestedConfig,
         UserDefinedTritonKernelNonInitConfig,
     )
+
+
+if has_triton_package():
+    import triton
+
+    @triton.jit
+    def _test_transitive_helper(x):
+        return x + 1
+
+    @triton.jit
+    def _test_transitive_kernel(x):
+        return _test_transitive_helper(x)
 
 
 class TestCodegenTriton(InductorTestCase):
@@ -323,6 +339,35 @@ def helper(x):
 
             call = ast.parse(wrapper_src).body[0].value
             self.assertEqual(ast.literal_eval(call.args[1]), source)
+
+    @unittest.skipUnless(has_triton_package(), "requires Triton")
+    def test_user_defined_triton_kernel_transitive_closure(self):
+        source_modules = user_defined_triton_kernel_transitive_closure(
+            _test_transitive_kernel
+        )
+        source = user_defined_triton_kernel_transitive_closure_source_code(
+            _test_transitive_kernel
+        )
+
+        # The root kernel is always retained, independent of injected modules.
+        kernel_module, kernel_source = source_modules[0]
+        self.assertIsNone(kernel_module)
+        self.assertIn("def _test_transitive_kernel", kernel_source)
+
+        # Dependencies retain their defining module for filtering.
+        self.assertTrue(
+            any(
+                module_name == _test_transitive_helper.fn.__module__
+                and "def _test_transitive_helper" in module_source
+                for module_name, module_source in source_modules
+            )
+        )
+
+        # The compatibility API composes collection and formatting.
+        self.assertEqual(
+            source,
+            "".join(module_source for _, module_source in source_modules),
+        )
 
     def test_persistent_reduction_choice_two_arg_override(self):
         seen_scores = []
