@@ -700,7 +700,7 @@ class TestMinDevice(_TestMinBase):
         self.assertEqual(
             extra_memory,
             0,
-            lambda msg: f"{msg}\nextra cuda memory left allocated: {extra_memory}",
+            lambda msg: f"{msg}\nextra accelerator memory left allocated: {extra_memory}",
         )
         super().tearDown()
 
