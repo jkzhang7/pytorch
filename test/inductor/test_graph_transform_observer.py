@@ -33,7 +33,7 @@ class TestGraphTransformObserver(TestCase):
     def test_sdpa_rewriter(self):
         if not (
             HAS_XPU_AND_TRITON
-            and (HAS_CUDA_AND_TRITON and PLATFORM_SUPPORTS_FUSED_ATTENTION)
+            or (HAS_CUDA_AND_TRITON and PLATFORM_SUPPORTS_FUSED_ATTENTION)
             and HAS_PYDOT
             and HAS_DOT
         ):
