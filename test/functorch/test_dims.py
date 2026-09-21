@@ -66,9 +66,10 @@ def triu(A):
     return torch.where(i <= j, a, zero).order(i, j)
 
 
-def gpu_time(lmb, name, r=100, device_type=None):
-    b = torch.get_device_module(device_type).Event(enable_timing=True)
-    e = torch.get_device_module(device_type).Event(enable_timing=True)
+def gpu_time(lmb, name, r, device):
+    device_module = torch.get_device_module(device)
+    b = device_module.Event(enable_timing=True)
+    e = device_module.Event(enable_timing=True)
     # with magic_trace(name + ".fxt"):
     for _ in range(r):
         lmb()
@@ -134,8 +135,6 @@ class _TestMinBase(TestCase):
         device=None,
         time=False,
     ):
-        device_type = None if device is None else torch.device(device).type
-
         def maybe_to(x):
             return x if device is None else x.to(device)
 
@@ -163,12 +162,8 @@ class _TestMinBase(TestCase):
         )  # why does a simple matmul not do the right thing?
 
         if time:
-            gpu_time(
-                lambda: B(hidden_state), "positional", r=3, device_type=device_type
-            )
-            gpu_time(
-                lambda: A(hidden_state), "first_class", r=3, device_type=device_type
-            )
+            gpu_time(lambda: B(hidden_state), "positional", r=3, device=device)
+            gpu_time(lambda: A(hidden_state), "first_class", r=3, device=device)
 
         for approach in ("relative_key", "relative_key_query"):
             A = maybe_to(
@@ -200,12 +195,8 @@ class _TestMinBase(TestCase):
             torch.testing.assert_close(a_out, b_out)
 
             if time:
-                gpu_time(
-                    lambda: B(hidden_state), "positional", r=3, device_type=device_type
-                )
-                gpu_time(
-                    lambda: A(hidden_state), "first_class", r=3, device_type=device_type
-                )
+                gpu_time(lambda: B(hidden_state), "positional", r=3, device=device)
+                gpu_time(lambda: A(hidden_state), "first_class", r=3, device=device)
 
         A = maybe_to(
             BertSelfAttentionA(
@@ -253,12 +244,8 @@ class _TestMinBase(TestCase):
         torch.testing.assert_close(a_out, b_out)
 
         if time:
-            gpu_time(
-                lambda: B(hidden_state), "positional", r=3, device_type=device_type
-            )
-            gpu_time(
-                lambda: A(hidden_state), "first_class", r=3, device_type=device_type
-            )
+            gpu_time(lambda: B(hidden_state), "positional", r=3, device=device)
+            gpu_time(lambda: A(hidden_state), "first_class", r=3, device=device)
 
 
 @skipIfTorchDynamo("Bad interaction")
