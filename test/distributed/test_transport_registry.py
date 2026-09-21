@@ -147,7 +147,7 @@ class TestTransportRegistry(TestCase):
         ):
             self.assertEqual(
                 available_transports(),
-                ("external", "nixl", "tcp", "torchcomms", "ucxx"),
+                ("external", "ibverbs", "nixl", "tcp", "torchcomms", "ucxx"),
             )
 
 
